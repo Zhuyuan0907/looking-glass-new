@@ -3,7 +3,7 @@ const CONFIG = {
     // === Globalping API Token ===
     // 註冊 https://globalping.io 帳號後，在 Dashboard 的 Tokens 頁面生成
     // 使用 Token 可將限制從 250/小時 提升到 500/小時
-    GLOBALPING_TOKEN: 'fovda7drnmf76g72ffr3po64sj37xs3t',  // 例如: 'your-globalping-api-token'
+    GLOBALPING_TOKEN: '',  // 例如: 'your-globalping-api-token'
     
     // === Cloudflare Worker 設定（推薦）===
     // 請按照 CLOUDFLARE_SETUP.md 的步驟設定 Worker
