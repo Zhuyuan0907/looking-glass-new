@@ -2106,6 +2106,25 @@ th[style*="width: 50px"] {
     color: #f44336;
 }
 
+.api-usage-indicator .api-count.proxy-mode {
+    color: #4caf50;
+    background: rgba(76, 175, 80, 0.1);
+    border-radius: 6px;
+    padding: 2px 6px;
+}
+
+.api-usage-indicator .proxy-status {
+    color: var(--primary-color);
+    font-size: 1rem;
+    animation: spin 2s linear infinite;
+    display: inline-block;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 .api-reset-btn {
     background: var(--primary-color);
     border: none;

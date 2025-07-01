@@ -79,6 +79,7 @@ function updateApiUsageDisplay() {
     if (!indicator) return;
     
     const countSpan = indicator.querySelector('.api-count');
+    const proxyStatus = document.getElementById('proxyStatus');
     if (!countSpan) return;
     
     // 檢查是否需要自動重置
@@ -90,58 +91,229 @@ function updateApiUsageDisplay() {
         saveApiTrackingState();
     }
     
-    // 更新顯示
+    // 更新計數顯示
     countSpan.textContent = `${apiRequestCount}/${GLOBALPING_HOURLY_LIMIT}`;
+    
+    // 顯示代理狀態
+    const isProxyEnabled = localStorage.getItem('useWorkerProxy') === 'true';
+    if (proxyStatus) {
+        if (isProxyEnabled) {
+            proxyStatus.style.display = 'inline';
+            proxyStatus.title = 'Worker代理模式已啟用';
+        } else {
+            proxyStatus.style.display = 'none';
+        }
+    }
     
     // 根據使用率設置樣式
     const usagePercent = (apiRequestCount / GLOBALPING_HOURLY_LIMIT) * 100;
     countSpan.classList.remove('warning', 'danger');
     
-    if (usagePercent >= 90) {
+    if (isProxyEnabled) {
+        // 代理模式下使用不同的顏色方案
+        countSpan.classList.add('proxy-mode');
+    } else if (usagePercent >= 90) {
         countSpan.classList.add('danger');
     } else if (usagePercent >= 70) {
         countSpan.classList.add('warning');
     }
 }
 
-// 重置API使用次數（嘗試多種方法）
+// 重置API使用次數（智能方案選擇）
 async function resetApiUsage() {
-    // 提供兩個選項
-    const choice = confirm(
-        '選擇解決API限制的方式：\n\n' +
-        '確定 = 嘗試Session重置（可能有效）\n' +
-        '取消 = 查看所有解決方案\n\n' +
-        '注意：Session重置不保證100%有效，因為Globalping主要基於IP追蹤。'
-    );
+    // 檢查是否已配置Worker代理
+    const hasWorkerProxy = CONFIG?.WORKER_URL && CONFIG.WORKER_URL.length > 0;
     
-    if (choice) {
-        await attemptSessionReset();
+    if (hasWorkerProxy) {
+        // 如果有Worker代理，優先使用代理模式
+        const choice = confirm(
+            '選擇解決API限制的方式：\n\n' +
+            '確定 = 啟用Worker代理模式（推薦）\n' +
+            '取消 = 查看其他解決方案\n\n' +
+            '✅ 檢測到您已配置Cloudflare Worker代理'
+        );
+        
+        if (choice) {
+            await enableWorkerProxyMode();
+        } else {
+            showApiSolutionsModal();
+        }
     } else {
-        showApiSolutionsModal();
+        // 沒有Worker代理時的選項
+        const choice = confirm(
+            '選擇解決API限制的方式：\n\n' +
+            '確定 = 嘗試Session重置（成功率低）\n' +
+            '取消 = 查看有效解決方案\n\n' +
+            '💡 推薦：設置Worker代理可獲得更好效果'
+        );
+        
+        if (choice) {
+            await attemptSessionReset();
+        } else {
+            showApiSolutionsModal();
+        }
     }
+}
+
+// 啟用Worker代理模式
+async function enableWorkerProxyMode() {
+    showNotification('正在啟用Worker代理模式...', 'info');
+    
+    try {
+        // 設置代理模式標記
+        localStorage.setItem('useWorkerProxy', 'true');
+        
+        // 重置本地API計數器
+        apiRequestCount = 0;
+        lastApiReset = Date.now();
+        isApiLimitReached = false;
+        saveApiTrackingState();
+        
+        // 測試Worker代理是否正常工作
+        const testUrl = `${CONFIG.WORKER_URL}/v1/measurements`;
+        const testResponse = await fetch(testUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                type: 'ping',
+                target: '8.8.8.8',
+                locations: [{magic: 'world'}],
+                limit: 1,
+                measurementOptions: {packets: 1}
+            })
+        });
+        
+        if (testResponse.ok) {
+            const testData = await testResponse.json();
+            showNotification('✅ Worker代理模式已啟用！', 'success');
+            updateApiUsageDisplay();
+            
+            setTimeout(() => {
+                showWorkerProxySuccess(testData.id);
+            }, 1500);
+        } else {
+            throw new Error(`Worker代理回應錯誤: ${testResponse.status}`);
+        }
+        
+    } catch (error) {
+        console.error('Worker代理啟用失敗:', error);
+        showNotification('❌ Worker代理啟用失敗，請檢查配置', 'error');
+        localStorage.removeItem('useWorkerProxy');
+        
+        setTimeout(() => {
+            showApiSolutionsModal();
+        }, 2000);
+    }
+}
+
+// 顯示Worker代理成功信息
+function showWorkerProxySuccess(measurementId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    
+    modal.innerHTML = `
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">🚀 Worker代理模式已啟用！</h5>
+                    <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success">
+                        <h6>✅ 代理模式已成功啟用！</h6>
+                        <hr>
+                        <p class="mb-2"><strong>代理URL:</strong></p>
+                        <code class="d-block p-2 bg-light rounded">${CONFIG.WORKER_URL}</code>
+                        <hr>
+                        <p class="mb-2"><strong>測試請求ID:</strong></p>
+                        <code class="d-block p-2 bg-light rounded">${measurementId}</code>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <h6>🔧 代理模式優勢：</h6>
+                        <ul class="mb-0">
+                            <li>使用Cloudflare Worker的IP地址</li>
+                            <li>繞過本地IP的API限制</li>
+                            <li>自動緩存重複請求</li>
+                            <li>多用戶共享Worker配額</li>
+                            <li>零額外成本（免費額度內）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="alert alert-warning">
+                        <h6>📝 使用說明：</h6>
+                        <ul class="mb-0">
+                            <li>所有API請求將通過Worker代理</li>
+                            <li>可隨時在設置中關閉代理模式</li>
+                            <li>如代理出現問題會自動回退到直連</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-success" onclick="this.closest('.modal').remove()">開始使用</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="this.closest('.modal').remove(); showWorkerSettings()">代理設置</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
 }
 
 // 嘗試Session重置
 async function attemptSessionReset() {
-    showNotification('正在嘗試Session重置...', 'info');
+    showNotification('正在進行深度重置...', 'info');
     
-    // 方法1：清除所有追蹤數據
+    // 方法1：清除所有localStorage數據
     localStorage.removeItem('apiTrackingState');
     localStorage.removeItem('sessionId');
     localStorage.removeItem('lookingGlassLogs');
+    localStorage.removeItem('globalpingState');
+    localStorage.removeItem('gpSession');
+    localStorage.removeItem('gpTracking');
     
-    // 方法2：生成完全新的Session
-    sessionId = 'reset_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2);
+    // 方法2：清除sessionStorage數據
+    sessionStorage.removeItem('apiTrackingState');
+    sessionStorage.removeItem('sessionId');
+    sessionStorage.removeItem('globalpingState');
+    sessionStorage.removeItem('gpSession');
+    sessionStorage.removeItem('gpTracking');
+    
+    // 方法3：清除所有可能的Globalping相關Cookie
+    await clearGlobalpingCookies();
+    
+    // 方法4：生成完全新的Session（加上更多隨機性）
+    const timestamp = Date.now();
+    const randomPart = Math.random().toString(36).substr(2) + Math.random().toString(36).substr(2);
+    sessionId = `reset_${timestamp}_${randomPart}`;
     localStorage.setItem('sessionId', sessionId);
     
-    // 方法3：重置API計數器
+    // 方法5：重置API計數器
     apiRequestCount = 0;
     lastApiReset = Date.now();
     isApiLimitReached = false;
     saveApiTrackingState();
     
-    // 方法4：清除用戶相關的數據
+    // 方法6：清除用戶相關的數據
     userIP = 'unknown';
+    
+    // 方法7：嘗試清除瀏覽器快取中的Globalping相關數據
+    if ('caches' in window) {
+        try {
+            const cacheNames = await caches.keys();
+            for (const cacheName of cacheNames) {
+                if (cacheName.includes('globalping') || cacheName.includes('api')) {
+                    await caches.delete(cacheName);
+                }
+            }
+        } catch (e) {
+            console.warn('無法清除快取:', e);
+        }
+    }
     
     // 方法5：嘗試發送一個測試請求來驗證
     try {
@@ -246,6 +418,92 @@ function showSuccessDetails(measurementId) {
     `;
     
     document.body.appendChild(modal);
+}
+
+// 清除Globalping相關的Cookie
+async function clearGlobalpingCookies() {
+    // 方法1：清除所有可能的Globalping域名的Cookie
+    const globalpingDomains = [
+        'globalping.io',
+        '.globalping.io',
+        'api.globalping.io',
+        '.api.globalping.io',
+        'dashboard.globalping.io',
+        '.dashboard.globalping.io'
+    ];
+    
+    // 方法2：清除常見的追蹤Cookie名稱
+    const possibleCookieNames = [
+        'session',
+        'sessionid',
+        'session_id',
+        'sid',
+        'auth',
+        'token',
+        'jwt',
+        'globalping_session',
+        'gp_session',
+        'gp_auth',
+        'gp_token',
+        'gp_tracking',
+        'api_session',
+        'rate_limit',
+        'rl_session',
+        '_ga',
+        '_gid',
+        '_gat',
+        '__utma',
+        '__utmb',
+        '__utmc',
+        '__utmz',
+        'cf_clearance',
+        'cf_ray'
+    ];
+    
+    // 方法3：使用Document.cookie API清除（適用於當前域名的Cookie）
+    possibleCookieNames.forEach(cookieName => {
+        // 清除當前域名的Cookie
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname}`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.${window.location.hostname}`;
+        
+        // 嘗試清除可能的Globalping域名Cookie（雖然跨域限制，但還是試試）
+        globalpingDomains.forEach(domain => {
+            document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${domain}`;
+        });
+    });
+    
+    // 方法4：如果支援Cookie Store API，使用它來清除（實驗性API）
+    if ('cookieStore' in window) {
+        try {
+            const cookies = await cookieStore.getAll();
+            for (const cookie of cookies) {
+                if (possibleCookieNames.includes(cookie.name.toLowerCase()) || 
+                    cookie.name.toLowerCase().includes('global') ||
+                    cookie.name.toLowerCase().includes('ping') ||
+                    cookie.name.toLowerCase().includes('api') ||
+                    cookie.name.toLowerCase().includes('session')) {
+                    await cookieStore.delete(cookie.name);
+                }
+            }
+        } catch (e) {
+            console.warn('Cookie Store API 不支援或失敗:', e);
+        }
+    }
+    
+    // 方法5：清除IndexedDB中可能的追蹤數據
+    if ('indexedDB' in window) {
+        try {
+            const dbsToDelete = ['globalping', 'gp_cache', 'api_cache', 'session_store'];
+            for (const dbName of dbsToDelete) {
+                indexedDB.deleteDatabase(dbName);
+            }
+        } catch (e) {
+            console.warn('無法清除IndexedDB:', e);
+        }
+    }
+    
+    console.log('已嘗試清除所有Globalping相關的Cookie和存儲數據');
 }
 
 // 顯示API解決方案模態框
