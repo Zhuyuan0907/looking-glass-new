@@ -3746,34 +3746,61 @@ function formatMobileTracerouteResult(container, output) {
             const hopNumber = hopMatch[1];
             const hopData = hopMatch[2];
             
-            // 提取IP地址和時間
-            const ipMatch = hopData.match(/(\d+\.\d+\.\d+\.\d+|\[?[0-9a-fA-F:]+\]?)/);
-            const timeMatch = hopData.match(/(\d+\.?\d*)\s*ms/g);
-            
-            let hopIP = 'Unknown';
+            // 更精確地提取IP地址、主機名和時間
+            let hopIP = '未知主機';
             let hopTimes = '';
             
+            // 提取IP地址 (IPv4 或 IPv6)
+            const ipMatch = hopData.match(/(\d+\.\d+\.\d+\.\d+|\[?[0-9a-fA-F:]+\]?)/);
             if (ipMatch) {
                 hopIP = ipMatch[1];
+            } else {
+                // 如果沒有IP，嘗試提取主機名
+                const hostMatch = hopData.match(/([a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,})/);
+                if (hostMatch) {
+                    hopIP = hostMatch[1];
+                    // 如果主機名太長，進行智能截斷
+                    if (hopIP.length > 25) {
+                        const parts = hopIP.split('.');
+                        if (parts.length > 2) {
+                            hopIP = parts[0] + '...' + parts.slice(-1)[0];
+                        } else {
+                            hopIP = hopIP.substring(0, 22) + '...';
+                        }
+                    }
+                } else {
+                    // 最後嘗試提取第一個詞作為主機標識
+                    const firstWord = hopData.split(/\s+/)[0];
+                    if (firstWord && firstWord !== '*' && firstWord !== 'timeout') {
+                        hopIP = firstWord.length > 20 ? firstWord.substring(0, 17) + '...' : firstWord;
+                    }
+                }
             }
             
-            if (timeMatch) {
-                hopTimes = timeMatch.join(' ');
+            // 提取時間信息，包括 * 和 timeout
+            const timeMatches = hopData.match(/(\d+\.?\d*\s*ms|\*|timeout)/g);
+            if (timeMatches) {
+                hopTimes = timeMatches.join(' ');
+            } else if (hopData.includes('*')) {
+                hopTimes = '*';
             }
             
             formattedHTML += `
                 <div class="hop-line">
                     <span class="hop-number">${hopNumber}</span>
                     <span class="hop-ip">${hopIP}</span>
-                    <span class="hop-time">${hopTimes}</span>
+                    <span class="hop-time">${hopTimes || '無回應'}</span>
                 </div>
             `;
+        } else if (trimmedLine.match(/^(traceroute|mtr|TRACEROUTE)/i)) {
+            // 標題行
+            formattedHTML += `<div style="margin-bottom: 1rem; padding: 0.5rem; background: var(--primary-color); color: white; border-radius: 6px; font-weight: 600; font-size: 0.85rem;">${trimmedLine}</div>`;
         } else if (trimmedLine.includes('ms') || trimmedLine.includes('timeout') || trimmedLine.includes('*')) {
             // 處理其他包含時間信息的行
-            formattedHTML += `<div class="hop-line">${trimmedLine}</div>`;
+            formattedHTML += `<div class="hop-line" style="border-left-color: #6c757d;"><span class="hop-number">?</span><span class="hop-ip">${trimmedLine}</span></div>`;
         } else {
             // 其他信息行
-            formattedHTML += `<div style="margin-bottom: 0.5rem; color: var(--text-muted); font-size: 0.9em;">${trimmedLine}</div>`;
+            formattedHTML += `<div style="margin-bottom: 0.5rem; color: var(--text-muted); font-size: 0.8rem; padding: 0.3rem; background: rgba(0,0,0,0.02); border-radius: 4px;">${trimmedLine}</div>`;
         }
     }
     
