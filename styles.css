@@ -2120,12 +2120,12 @@ th[style*="width: 50px"] {
 }
 
 .api-reset-btn:hover {
-    background: var(--primary-hover);
-    transform: rotate(180deg);
+    background: var(--primary-hover, #0056b3);
+    transform: scale(1.1);
 }
 
 .api-reset-btn:active {
-    transform: rotate(180deg) scale(0.9);
+    transform: scale(0.9);
 }
 
 .api-reset-btn i {

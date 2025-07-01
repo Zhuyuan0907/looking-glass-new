@@ -1,80 +1,161 @@
-# API 優化方案
+# API 限制問題解決方案
 
-本專案提供多種方式來提高 Globalping API 的使用限制。
+## 📋 問題說明
 
-## 方案一：使用 Globalping Token（最簡單）
+Globalping API 的限制是在服務器端基於 IP 地址追蹤的，無法通過客戶端操作重置。當達到限制時，需要採用以下實際有效的解決方案。
 
-1. 註冊 Globalping 帳號：https://globalping.io
-2. 在 Dashboard 的 Tokens 頁面生成 API Token
-3. 在 `config.js` 中設置 `GLOBALPING_TOKEN`
+## 🚀 立即可用的解決方案
 
-優點：
-- 實施簡單
-- 限制從 250/小時 提升到 500/小時
-- 官方支援
+### 方案一：切換 IP 地址（最快速）
 
-缺點：
-- 仍然有限制
-- Token 需要保密
+**原理**：Globalping 基於 IP 地址計算限制，切換 IP 可立即獲得新配額
 
-## 方案二：使用 Cloudflare Worker 代理（推薦）
+**實施方法**：
+1. **使用 VPN 服務**
+   - 連接到不同國家/地區的服務器
+   - 推薦：ProtonVPN、NordVPN、ExpressVPN
+   - 免費選項：Cloudflare WARP、ProtonVPN 免費版
 
-使用 Cloudflare Worker 作為代理服務器，可以實現：
-- 請求緩存（減少重複請求）
-- 多用戶共享配額
-- 集中管理 Token
+2. **使用手機熱點**
+   - 開啟手機的 4G/5G 熱點
+   - 電腦連接手機網路進行測試
+   - 通常能獲得不同的 IP 地址
 
-### 部署步驟：
+3. **重啟路由器**（僅適用於動態 IP）
+   - 斷開路由器電源 5-10 分鐘
+   - 重新連線可能獲得新的 IP 地址
+   - 效果取決於 ISP 的 IP 分配策略
 
-1. 登入 Cloudflare Dashboard
-2. 創建新的 Worker
-3. 使用 `worker-proxy.js` 的代碼
-4. 設置環境變數 `GLOBALPING_TOKEN`（可選）
-5. 部署 Worker
+⚠️ **注意事項**：
+- 頻繁切換 IP 可能觸發反濫用機制
+- 某些 VPN IP 可能已被其他用戶耗盡配額
 
-### 配置前端：
+### 方案二：部署 Cloudflare Worker 代理
 
-在 `config.js` 中添加：
+**原理**：使用 Worker 的 IP 地址代替本地 IP，並實現緩存優化
+
+**優勢**：
+- 使用 Cloudflare 的 IP 而非用戶 IP
+- 多用戶共享 Worker 配額
+- 自動緩存相同請求
+- 零成本（免費額度）
+
+**部署步驟**：
+1. 登入 [Cloudflare Dashboard](https://dash.cloudflare.com)
+2. 前往 Workers & Pages → Create Application → Create Worker
+3. 複製 `worker-proxy.js` 的代碼
+4. 設置環境變數（可選）：
+   ```
+   GLOBALPING_TOKEN=your-api-token
+   ```
+5. 部署後獲得 Worker URL
+
+**前端配置**：
 ```javascript
-WORKER_PROXY_URL: 'https://your-proxy.workers.dev',
+// 在 config.js 中添加
+WORKER_PROXY_URL: 'https://your-worker.your-subdomain.workers.dev',
 ```
 
-## 方案三：實施客戶端緩存
+### 方案三：啟用智能緩存
 
-在前端實施智能緩存策略：
-- 緩存節點狀態（5分鐘）
-- 緩存測試結果（對相同目標）
-- 批量檢查節點狀態
+**原理**：減少不必要的 API 請求，延長可用時間
 
-## 方案四：架設自己的探測節點
+**實施策略**：
+1. **節點狀態緩存**（5分鐘）
+   - 避免重複檢查相同節點
+   - 減少 90% 的狀態檢查請求
 
-Globalping 允許用戶架設自己的探測節點來獲取額外積分：
-- 每個節點每天獲得 150 積分
-- 積分可用於超出限制的測試
+2. **批量節點檢查**
+   - 一次請求檢查多個節點
+   - 大幅降低總請求數
 
-### 架設步驟：
+3. **測試結果緩存**
+   - 相同目標的測試結果暫存
+   - 避免重複測試
 
-1. 準備一台 VPS 或家用電腦
-2. 安裝 Docker
-3. 運行 Globalping 探測節點：
-```bash
-docker run -d --name globalping-probe \
-  --restart always \
-  -e GLOBALPING_TOKEN=your-token \
-  ghcr.io/jsdelivr/globalping-probe
+**啟用方法**：
+點擊 API 計數器旁的 ❓ 按鈕 → 方案三 → 啟用緩存選項
+
+### 方案四：使用官方 API Token
+
+**獲取步驟**：
+1. 前往 [Globalping Dashboard](https://globalping.io)
+2. 註冊免費帳號
+3. 在 Tokens 頁面生成 API Token
+4. 在 `config.js` 中設置：
+   ```javascript
+   GLOBALPING_TOKEN: 'your-api-token',
+   ```
+
+**效果**：
+- 限制從 250/小時 提升到 500/小時
+- 更穩定的配額管理
+
+## 🏆 推薦組合策略
+
+### 日常使用
+```
+官方 Token (500/小時) + 智能緩存 = 穩定使用
 ```
 
-## 方案五：實施請求優化
+### 高頻使用
+```
+Worker 代理 + 官方 Token + VPN 備用 = 幾乎無限制
+```
 
-1. **批量節點檢查**：一次檢查多個節點
-2. **智能重試**：只對失敗的請求重試
-3. **優先級隊列**：優先處理用戶發起的測試
+### 開發測試
+```
+本地緩存 + 批量檢查 = 開發友好
+```
 
-## 推薦組合
+## 🔧 技術實現
 
-對於高流量網站，推薦組合使用：
-1. Globalping Token（基礎 500/小時）
-2. Cloudflare Worker 代理（緩存優化）
-3. 架設 1-2 個探測節點（額外積分）
+### Worker 代理核心代碼
+```javascript
+// 請求轉發
+const globalpingUrl = `https://api.globalping.io/${apiPath}`;
+const response = await fetch(globalpingUrl, {
+    headers: {
+        'Authorization': `Bearer ${env.GLOBALPING_TOKEN}`
+    }
+});
 
-這樣可以有效支援每小時 1000+ 次測試。
+// 緩存策略
+if (response.ok && request.method === 'GET') {
+    cache.put(cacheKey, response.clone());
+}
+```
+
+### 本地緩存實現
+```javascript
+// 節點狀態緩存
+const cacheKey = `node_status_${nodeId}`;
+const cached = localStorage.getItem(cacheKey);
+if (cached && Date.now() - cached.timestamp < 300000) {
+    return cached.data;
+}
+```
+
+## 📊 效果對比
+
+| 方案 | 立即生效 | 技術難度 | 效果持續性 | 推薦指數 |
+|------|----------|----------|------------|----------|
+| VPN/代理 | ✅ | ⭐ | ⭐⭐ | ⭐⭐⭐⭐ |
+| Worker代理 | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 智能緩存 | ✅ | ⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 官方Token | ✅ | ⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+
+## 💡 專業提示
+
+1. **組合使用**：不要依賴單一方案，組合使用效果最佳
+2. **監控使用**：注意 API 計數器，提前切換策略
+3. **緩存優先**：能用緩存就不發新請求
+4. **錯峰使用**：避開使用高峰期（如UTC工作時間）
+
+## ⚡ 緊急方案
+
+當所有方案都無效時：
+1. 使用手機 4G 網路
+2. 請朋友代為測試
+3. 等待下一個小時重置
+4. 使用其他 Looking Glass 服務

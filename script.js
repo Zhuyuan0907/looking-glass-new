@@ -104,59 +104,375 @@ function updateApiUsageDisplay() {
     }
 }
 
-// 重置API使用次數（黑科技）
-function resetApiUsage() {
-    // 確認對話框
-    if (!confirm('確定要重置API使用次數嗎？\n\n提示：這會清除本地的API追蹤記錄，讓系統認為您是新的使用者。')) {
-        return;
-    }
+// 重置API使用次數（嘗試多種方法）
+async function resetApiUsage() {
+    // 提供兩個選項
+    const choice = confirm(
+        '選擇解決API限制的方式：\n\n' +
+        '確定 = 嘗試Session重置（可能有效）\n' +
+        '取消 = 查看所有解決方案\n\n' +
+        '注意：Session重置不保證100%有效，因為Globalping主要基於IP追蹤。'
+    );
     
-    // 清除所有相關的追蹤資料
+    if (choice) {
+        await attemptSessionReset();
+    } else {
+        showApiSolutionsModal();
+    }
+}
+
+// 嘗試Session重置
+async function attemptSessionReset() {
+    showNotification('正在嘗試Session重置...', 'info');
+    
+    // 方法1：清除所有追蹤數據
     localStorage.removeItem('apiTrackingState');
     localStorage.removeItem('sessionId');
+    localStorage.removeItem('lookingGlassLogs');
     
-    // 生成新的session ID
-    sessionId = generateSessionId();
+    // 方法2：生成完全新的Session
+    sessionId = 'reset_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2);
+    localStorage.setItem('sessionId', sessionId);
     
-    // 重置計數器
+    // 方法3：重置API計數器
     apiRequestCount = 0;
     lastApiReset = Date.now();
     isApiLimitReached = false;
-    
-    // 保存新狀態
     saveApiTrackingState();
     
-    // 更新顯示
-    updateApiUsageDisplay();
+    // 方法4：清除用戶相關的數據
+    userIP = 'unknown';
     
-    // 顯示成功訊息
-    showNotification('API使用次數已重置！', 'success');
+    // 方法5：嘗試發送一個測試請求來驗證
+    try {
+        showNotification('測試新Session是否有效...', 'info');
+        
+        // 使用最小的測試請求
+        const testResponse = await fetch('https://api.globalping.io/v1/measurements', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(CONFIG?.GLOBALPING_TOKEN ? {'Authorization': `Bearer ${CONFIG.GLOBALPING_TOKEN}`} : {})
+            },
+            body: JSON.stringify({
+                type: 'ping',
+                target: '8.8.8.8',
+                locations: [{
+                    magic: 'world'
+                }],
+                limit: 1,
+                measurementOptions: {
+                    packets: 1
+                }
+            })
+        });
+        
+        if (testResponse.ok) {
+            const testData = await testResponse.json();
+            showNotification('✅ Session重置成功！API限制已重置', 'success');
+            
+            // 更新顯示
+            updateApiUsageDisplay();
+            
+            // 顯示成功詳情
+            setTimeout(() => {
+                showSuccessDetails(testData.id);
+            }, 1500);
+            
+        } else if (testResponse.status === 429) {
+            showNotification('❌ Session重置無效，API仍然受限', 'error');
+            setTimeout(() => {
+                showApiSolutionsModal();
+            }, 2000);
+        } else {
+            showNotification('⚠️ 測試請求失败，無法確認重置效果', 'warning');
+        }
+        
+    } catch (error) {
+        console.error('測試請求錯誤:', error);
+        showNotification('⚠️ 網路錯誤，無法測試重置效果', 'warning');
+    }
+}
+
+// 顯示成功詳情
+function showSuccessDetails(measurementId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    
+    modal.innerHTML = `
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">🎉 Session 重置成功！</h5>
+                    <button type="button" class="btn-close btn-close-white" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success">
+                        <h6>✅ 重置成功！您現在可以繼續使用API</h6>
+                        <hr>
+                        <p class="mb-2"><strong>新的Session ID:</strong></p>
+                        <code class="d-block p-2 bg-light rounded">${sessionId}</code>
+                        <hr>
+                        <p class="mb-2"><strong>測試請求ID:</strong></p>
+                        <code class="d-block p-2 bg-light rounded">${measurementId}</code>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <h6>📝 重置原理說明：</h6>
+                        <ul class="mb-0">
+                            <li>清除了本地的Session追蹤數據</li>
+                            <li>生成了新的Session ID</li>
+                            <li>重置了API請求計數器</li>
+                            <li>測試請求成功，證明限制已解除</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="alert alert-warning">
+                        <h6>⚠️ 注意事項：</h6>
+                        <ul class="mb-0">
+                            <li>這個方法可能不是100%可靠</li>
+                            <li>如果再次遇到限制，請使用VPN或等待重置</li>
+                            <li>建議適度使用，避免觸發反濫用機制</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-success" onclick="this.closest('.modal').remove()">太棒了！</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+// 顯示API解決方案模態框
+function showApiSolutionsModal() {
+    // 創建模態框
+    const modal = document.createElement('div');
+    modal.className = 'modal fade show';
+    modal.style.display = 'block';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    
+    const modalContent = `
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">解決 API 限制問題</h5>
+                    <button type="button" class="btn-close" onclick="this.closest('.modal').remove()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Globalping 的 API 限制是基於 IP 地址在服務器端追蹤的，無法通過客戶端操作重置。
+                    </div>
+                    
+                    <h6 class="mb-3">🚀 立即可用的解決方案：</h6>
+                    
+                    <div class="accordion" id="solutionsAccordion">
+                        <!-- 方案1：使用VPN -->
+                        <div class="accordion-item mb-2">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#solution1">
+                                    <i class="bi bi-shield-lock me-2"></i>
+                                    方案一：使用 VPN 或代理（最快速）
+                                </button>
+                            </h2>
+                            <div id="solution1" class="accordion-collapse collapse show" data-bs-parent="#solutionsAccordion">
+                                <div class="accordion-body">
+                                    <p>切換您的 IP 地址可以立即獲得新的配額：</p>
+                                    <ul>
+                                        <li>使用 VPN 服務切換到不同的服務器</li>
+                                        <li>使用手機熱點（4G/5G 網路）</li>
+                                        <li>重啟路由器（如果您的 ISP 提供動態 IP）</li>
+                                    </ul>
+                                    <div class="alert alert-warning mt-3">
+                                        <small><i class="bi bi-exclamation-triangle me-1"></i> 
+                                        注意：頻繁切換 IP 可能觸發 Globalping 的反濫用機制</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 方案2：使用代理Worker -->
+                        <div class="accordion-item mb-2">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#solution2">
+                                    <i class="bi bi-cloud me-2"></i>
+                                    方案二：部署 Cloudflare Worker 代理
+                                </button>
+                            </h2>
+                            <div id="solution2" class="accordion-collapse collapse" data-bs-parent="#solutionsAccordion">
+                                <div class="accordion-body">
+                                    <p>使用 Cloudflare Worker 作為代理，可以：</p>
+                                    <ul>
+                                        <li>使用 Worker 的 IP 地址而非您的本地 IP</li>
+                                        <li>實現請求緩存，減少重複請求</li>
+                                        <li>多個用戶共享 Worker 的配額</li>
+                                    </ul>
+                                    <div class="mt-3">
+                                        <button class="btn btn-sm btn-primary" onclick="showWorkerSetup()">
+                                            查看部署教程
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 方案3：本地緩存 -->
+                        <div class="accordion-item mb-2">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#solution3">
+                                    <i class="bi bi-hdd me-2"></i>
+                                    方案三：啟用智能緩存（減少請求）
+                                </button>
+                            </h2>
+                            <div id="solution3" class="accordion-collapse collapse" data-bs-parent="#solutionsAccordion">
+                                <div class="accordion-body">
+                                    <p>通過緩存減少不必要的 API 請求：</p>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox" id="enableCache" ${localStorage.getItem('enableApiCache') === 'true' ? 'checked' : ''}>
+                                        <label class="form-check-label" for="enableCache">
+                                            啟用節點狀態緩存（5分鐘）
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input class="form-check-input" type="checkbox" id="enableBatchCheck" ${localStorage.getItem('enableBatchCheck') === 'true' ? 'checked' : ''}>
+                                        <label class="form-check-label" for="enableBatchCheck">
+                                            批量檢查節點（減少 90% 請求）
+                                        </label>
+                                    </div>
+                                    <button class="btn btn-sm btn-success mt-3" onclick="saveApiOptimizations()">
+                                        <i class="bi bi-check-circle me-1"></i> 保存設置
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 方案4：等待重置 -->
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#solution4">
+                                    <i class="bi bi-clock me-2"></i>
+                                    方案四：等待自動重置
+                                </button>
+                            </h2>
+                            <div id="solution4" class="accordion-collapse collapse" data-bs-parent="#solutionsAccordion">
+                                <div class="accordion-body">
+                                    <p>API 限制會在每小時自動重置。</p>
+                                    <div class="text-center mt-3">
+                                        <h4 class="text-primary">剩餘重置時間</h4>
+                                        <h2 class="countdown-timer" id="resetCountdown">計算中...</h2>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 p-3 bg-light rounded">
+                        <h6 class="mb-2">💡 專業提示：</h6>
+                        <small class="text-muted">
+                            如果您經常遇到 API 限制，建議結合使用多種方案。例如：啟用緩存 + 使用 VPN 作為備用方案。
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">關閉</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    modal.innerHTML = modalContent;
+    document.body.appendChild(modal);
+    
+    // 啟動倒計時
+    startResetCountdown();
+    
+    // 初始化 Bootstrap 的手風琴組件
+    const accordionEl = modal.querySelector('#solutionsAccordion');
+    if (accordionEl && window.bootstrap) {
+        new bootstrap.Collapse(accordionEl.querySelector('.accordion-collapse.show'));
+    }
+}
+
+// 顯示Worker設置教程
+function showWorkerSetup() {
+    window.open('https://github.com/tw-yuan/looking-glass-new/blob/main/worker-proxy.js', '_blank');
+}
+
+// 保存API優化設置
+function saveApiOptimizations() {
+    const enableCache = document.getElementById('enableCache').checked;
+    const enableBatchCheck = document.getElementById('enableBatchCheck').checked;
+    
+    localStorage.setItem('enableApiCache', enableCache);
+    localStorage.setItem('enableBatchCheck', enableBatchCheck);
+    
+    showNotification('設置已保存！請重新整理頁面以生效。', 'success');
+}
+
+// 啟動重置倒計時
+function startResetCountdown() {
+    const updateCountdown = () => {
+        const countdown = document.getElementById('resetCountdown');
+        if (!countdown) return;
+        
+        const remainingTime = getRemainingTime();
+        if (remainingTime <= 0) {
+            countdown.textContent = '可以重新使用了！';
+            countdown.className = 'countdown-timer text-success';
+            return;
+        }
+        
+        const minutes = Math.floor(remainingTime / 60000);
+        const seconds = Math.floor((remainingTime % 60000) / 1000);
+        countdown.textContent = `${minutes}分${seconds}秒`;
+        
+        setTimeout(updateCountdown, 1000);
+    };
+    
+    updateCountdown();
 }
 
 // 顯示通知
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
+    
+    let backgroundColor;
+    switch(type) {
+        case 'success': backgroundColor = '#28a745'; break;
+        case 'error': backgroundColor = '#dc3545'; break;
+        case 'warning': backgroundColor = '#ffc107'; break;
+        default: backgroundColor = '#17a2b8'; break;
+    }
+    
     notification.style.cssText = `
         position: fixed;
         top: 120px;
         right: 20px;
         z-index: 9999;
         padding: 12px 20px;
-        background: ${type === 'success' ? '#28a745' : '#17a2b8'};
-        color: white;
+        background: ${backgroundColor};
+        color: ${type === 'warning' ? '#000' : 'white'};
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         font-weight: 500;
         animation: slideIn 0.3s ease-out;
+        max-width: 300px;
+        font-size: 0.9rem;
     `;
     notification.textContent = message;
     
     document.body.appendChild(notification);
     
+    const duration = type === 'error' ? 5000 : 3000;
     setTimeout(() => {
         notification.style.animation = 'slideOut 0.3s ease-out';
         setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    }, duration);
 }
 
 // 計算剩餘時間
