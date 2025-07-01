@@ -10,7 +10,7 @@ let sessionId = localStorage.getItem('sessionId') || generateSessionId();
 
 // Globalping API 限制追蹤
 const API_RESET_INTERVAL = 60 * 60 * 1000; // 每小時重置計數
-const GLOBALPING_HOURLY_LIMIT = 250; // Globalping每小時250次測試（未認證用戶）
+const GLOBALPING_HOURLY_LIMIT = CONFIG?.GLOBALPING_TOKEN ? 500 : 250; // 有Token時500次，無Token時250次
 let apiRequestCount = 0;
 let lastApiReset = Date.now();
 let isApiLimitReached = false;
@@ -18,10 +18,145 @@ let isApiLimitReached = false;
 // 初始化API計數追蹤
 function initApiTracking() {
     const now = Date.now();
-    // 簡化的初始化，不使用localStorage緩存
+    // 從localStorage恢復API計數狀態
+    const savedApiState = localStorage.getItem('apiTrackingState');
+    if (savedApiState) {
+        try {
+            const state = JSON.parse(savedApiState);
+            // 檢查是否需要重置（超過1小時）
+            if (now - state.lastReset > API_RESET_INTERVAL) {
+                apiRequestCount = 0;
+                lastApiReset = now;
+                isApiLimitReached = false;
+            } else {
+                apiRequestCount = state.count || 0;
+                lastApiReset = state.lastReset || now;
+                isApiLimitReached = state.isLimitReached || false;
+            }
+        } catch (e) {
+            apiRequestCount = 0;
+            lastApiReset = now;
+            isApiLimitReached = false;
+        }
+    } else {
+        apiRequestCount = 0;
+        lastApiReset = now;
+        isApiLimitReached = false;
+    }
+    
+    // 保存狀態
+    saveApiTrackingState();
+}
+
+// 保存API追蹤狀態
+function saveApiTrackingState() {
+    const state = {
+        count: apiRequestCount,
+        lastReset: lastApiReset,
+        isLimitReached: isApiLimitReached
+    };
+    localStorage.setItem('apiTrackingState', JSON.stringify(state));
+}
+
+// 初始化API使用次數顯示
+function initApiUsageDisplay() {
+    // 更新顯示
+    updateApiUsageDisplay();
+    
+    // 設置重置按鈕事件
+    const resetBtn = document.getElementById('apiResetBtn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetApiUsage);
+    }
+    
+    // 每秒更新一次顯示
+    setInterval(updateApiUsageDisplay, 1000);
+}
+
+// 更新API使用次數顯示
+function updateApiUsageDisplay() {
+    const indicator = document.getElementById('apiUsageIndicator');
+    if (!indicator) return;
+    
+    const countSpan = indicator.querySelector('.api-count');
+    if (!countSpan) return;
+    
+    // 檢查是否需要自動重置
+    const now = Date.now();
+    if (now - lastApiReset > API_RESET_INTERVAL) {
+        apiRequestCount = 0;
+        lastApiReset = now;
+        isApiLimitReached = false;
+        saveApiTrackingState();
+    }
+    
+    // 更新顯示
+    countSpan.textContent = `${apiRequestCount}/${GLOBALPING_HOURLY_LIMIT}`;
+    
+    // 根據使用率設置樣式
+    const usagePercent = (apiRequestCount / GLOBALPING_HOURLY_LIMIT) * 100;
+    countSpan.classList.remove('warning', 'danger');
+    
+    if (usagePercent >= 90) {
+        countSpan.classList.add('danger');
+    } else if (usagePercent >= 70) {
+        countSpan.classList.add('warning');
+    }
+}
+
+// 重置API使用次數（黑科技）
+function resetApiUsage() {
+    // 確認對話框
+    if (!confirm('確定要重置API使用次數嗎？\n\n提示：這會清除本地的API追蹤記錄，讓系統認為您是新的使用者。')) {
+        return;
+    }
+    
+    // 清除所有相關的追蹤資料
+    localStorage.removeItem('apiTrackingState');
+    localStorage.removeItem('sessionId');
+    
+    // 生成新的session ID
+    sessionId = generateSessionId();
+    
+    // 重置計數器
     apiRequestCount = 0;
-    lastApiReset = now;
+    lastApiReset = Date.now();
     isApiLimitReached = false;
+    
+    // 保存新狀態
+    saveApiTrackingState();
+    
+    // 更新顯示
+    updateApiUsageDisplay();
+    
+    // 顯示成功訊息
+    showNotification('API使用次數已重置！', 'success');
+}
+
+// 顯示通知
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 120px;
+        right: 20px;
+        z-index: 9999;
+        padding: 12px 20px;
+        background: ${type === 'success' ? '#28a745' : '#17a2b8'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        font-weight: 500;
+        animation: slideIn 0.3s ease-out;
+    `;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }
 
 // 計算剩餘時間
@@ -90,6 +225,12 @@ function incrementApiCount() {
     apiRequestCount++;
     console.log(`Globalping API使用: ${apiRequestCount}/${GLOBALPING_HOURLY_LIMIT}`);
     
+    // 保存狀態
+    saveApiTrackingState();
+    
+    // 更新顯示
+    updateApiUsageDisplay();
+    
     // 檢查是否達到限制
     if (apiRequestCount >= GLOBALPING_HOURLY_LIMIT) {
         isApiLimitReached = true;
@@ -107,6 +248,12 @@ function incrementApiCount() {
 async function makeApiRequest(url, options = {}) {
     // 直接發送請求，不做緩存檢查
     incrementApiCount();
+    
+    // 如果有配置Token，添加到請求頭
+    if (CONFIG?.GLOBALPING_TOKEN && url.includes('api.globalping.io')) {
+        options.headers = options.headers || {};
+        options.headers['Authorization'] = `Bearer ${CONFIG.GLOBALPING_TOKEN}`;
+    }
     
     try {
         const response = await fetch(url, options);
@@ -169,7 +316,7 @@ function showGlobalpingLimitWarning() {
             <div style="flex: 1;">
                 <div style="font-weight: 700; font-size: 18px; margin-bottom: 8px;">❗ Globalping API 限制已達</div>
                 <div style="font-size: 15px; line-height: 1.5; margin-bottom: 12px;">
-                    您已達到每小時 <strong>250 次測試</strong> 的使用限制。
+                    您已達到每小時 <strong>${GLOBALPING_HOURLY_LIMIT} 次測試</strong> 的使用限制。
                 </div>
                 <div style="font-size: 13px; opacity: 0.85; line-height: 1.4;">
                     • 系統會在每小時自動重置 API 使用次數<br>
@@ -1334,6 +1481,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         // 初始化API追蹤
         initApiTracking();
+        
+        // 初始化API使用次數顯示
+        initApiUsageDisplay();
         
         // 初始化主題
         initTheme();
@@ -3082,6 +3232,11 @@ async function startMobileTest() {
     resultTitle.textContent = `${mobileSelectedNode.name_zh || mobileSelectedNode.name} - ${testType.toUpperCase()}`;
     resultContent.textContent = '正在執行測試，請稍候...';
     
+    // 自動滾動到結果區域
+    setTimeout(() => {
+        resultsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+    
     try {
         // 記錄使用日誌
         await logUsage('test_started', {
@@ -3785,13 +3940,7 @@ function formatMobileTracerouteResult(container, output) {
                 hopTimes = '*';
             }
             
-            formattedHTML += `
-                <div class="hop-line">
-                    <span class="hop-number">${hopNumber}</span>
-                    <span class="hop-ip">${hopIP}</span>
-                    <span class="hop-time">${hopTimes || '無回應'}</span>
-                </div>
-            `;
+            formattedHTML += `<div class="hop-line"><span class="hop-number">${hopNumber}</span><span class="hop-ip">${hopIP}</span><span class="hop-time">${hopTimes || '無回應'}</span></div>`;
         } else if (trimmedLine.match(/^(traceroute|mtr|TRACEROUTE)/i)) {
             // 標題行
             formattedHTML += `<div style="margin-bottom: 1rem; padding: 0.5rem; background: var(--primary-color); color: white; border-radius: 6px; font-weight: 600; font-size: 0.85rem;">${trimmedLine}</div>`;
